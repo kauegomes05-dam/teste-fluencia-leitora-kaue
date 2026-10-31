@@ -52,7 +52,8 @@ def transcrever_e_calcular(caminho_audio):
             initial_prompt="Avaliação de leitura escolar em português do Brasil. O aluno lê o texto em voz alta palavra por palavra."
         )
         texto = resultado.get("text", "").strip()
-    except Exception:
+    except Exception as e:
+        st.error(f"Erro detalhado na transcrição do Whisper: {e}")
         texto = ""
         
     return texto, duracao
@@ -256,8 +257,7 @@ with aba1:
         <p><strong>Aluno:</strong> {aluno_val} ({st.session_state.ano_escolar}º Ano)</p>
         <p><strong>Precisão:</strong> {precisao:.1f}% | <strong>Ritmo:</strong> {round(ppm_real)} PPM</p>
         <div style="background: #1e1e1e; padding: 15px; border-radius: 8px; color: #fff; margin-top: 15px;">{html_texto}</div>
-    </div>
-</body></html>"""
+    </div></body></html>"""
             
             with open(ficheiro_individual, "w", encoding="utf-8") as f_ind:
                 f_ind.write(conteudo_html)
@@ -280,4 +280,4 @@ with aba2:
                     st.download_button("📥 Descarregar Base Completa desta Turma (CSV)", f_csv_dl, file_name=f_csv, mime="text/csv")
         else:
             st.info("Ainda não existem registos guardados para este nome de professor/turma.")
-                            
+            
