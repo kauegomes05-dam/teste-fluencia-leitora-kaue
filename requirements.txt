@@ -1,6 +1,6 @@
 streamlit
-openai-whisper
-librosa
 pandas
-torch
-soundfile
+librosa
+openai-whisper
+torch --index-url https://download.pytorch.org/whl/cpu
+torchaudio --index-url https://download.pytorch.org/whl/cpu
