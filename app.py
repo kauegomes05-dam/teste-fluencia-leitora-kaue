@@ -19,7 +19,7 @@ st.set_page_config(
 )
 
 st.title("📚 Teste de Fluência Leitora - Professor Kauê")
-st.markdown("### **Ambiente Multi-Professor / Turma Isolada (Versão Profissional)**")
+st.markdown("### **Ambiente Multi-Professor / Turma Isolada (Versão Profissional com IA)**")
 
 # Carregar o modelo Whisper otimizado (base) em cache
 @st.cache_resource
@@ -44,14 +44,16 @@ def transcrever_e_calcular(caminho_audio, texto_referencia):
         
     texto = ""
     try:
-        # TRUQUE PROFISSIONAL: Forçar o Whisper a usar o texto original como contexto exato
-        prompt_contexto = f"O aluno está a ler em voz alta exatamente o seguinte texto em português do Brasil: {texto_referencia}"
+        # Prompt contextual escolar estrito para guiar o Whisper na direção do texto original
+        prompt_contexto = f"O aluno lê o seguinte texto em voz alta em português do Brasil: {texto_referencia}"
         
+        # Ativar word_timestamps para capturar o alinhamento de cada palavra falada
         resultado = modelo_whisper.transcribe(
             caminho_audio, 
             language="pt", 
             task="transcribe", 
             temperature=0.0,
+            word_timestamps=True,
             initial_prompt=prompt_contexto
         )
         texto = resultado.get("text", "").strip()
@@ -145,12 +147,12 @@ with aba1:
                     tmp.write(audio_file.read())
                     caminho_audio_temp = tmp.name
             
-            with st.spinner("A inteligência artificial está a transcrever com base no texto de referência..."):
+            with st.spinner("A inteligência artificial está a analisar a pronúncia e o ritmo da leitura..."):
                 texto_auto, duracao_auto = transcrever_e_calcular(caminho_audio_temp, orig_val)
             
             tempo_real = duracao_auto if duracao_auto > 0 else 15.0
             
-            # Preenche automaticamente a caixa de texto se estiver vazia
+            # Preenche automaticamente a caixa de texto se estiver vazia e recarrega para exibir
             if not st.session_state.texto_transcrito_manual.strip() and texto_auto:
                 st.session_state.texto_transcrito_manual = texto_auto
                 st.rerun()
@@ -195,8 +197,15 @@ with aba1:
                         orig_orig = lista_original_raw[i1 + k] if (i1 + k) < i2 else ""
                         lido_orig = lista_lida_raw[j1 + k] if (j1 + k) < j2 else ""
                         if orig_orig and lido_orig:
-                            resultado_analise.append((orig_orig, lido_orig, "ERRADO"))
-                            erros_detalhados.append(f"Esperado: [{orig_orig}] --> Lido: [{lido_orig}]")
+                            # Verificar similaridade fonética/textual (ex: roupa vs ropa)
+                            sub_matcher = difflib.SequenceMatcher(None, limpar_palavra(orig_orig), limpar_palavra(lido_orig))
+                            if sub_matcher.ratio() >= 0.6:
+                                # Considerado uma troca leve / aproximação (conta como incorreto mas sinaliza proximidade)
+                                resultado_analise.append((orig_orig, lido_orig, "ERRADO"))
+                                erros_detalhados.append(f"Esperado: [{orig_orig}] --> Lido com variação: [{lido_orig}]")
+                            else:
+                                resultado_analise.append((orig_orig, lido_orig, "ERRADO"))
+                                erros_detalhados.append(f"Esperado: [{orig_orig}] --> Lido incorreto: [{lido_orig}]")
                         elif orig_orig:
                             resultado_analise.append((orig_orig, "", "OMITIDO"))
                             erros_detalhados.append(f"Esperado: [{orig_orig}] --> Omitido")
