@@ -21,7 +21,7 @@ st.set_page_config(
 st.title("📚 Teste de Fluência Leitora - Professor Kauê")
 st.markdown("### **Ambiente Multi-Professor / Turma Isolada (Versão Profissional)**")
 
-# Carregar o modelo Whisper otimizado (base) para evitar sobrecarga de memória
+# Carregar o modelo Whisper otimizado (base) em cache
 @st.cache_resource
 def carregar_whisper():
     return whisper.load_model("base")
@@ -44,11 +44,13 @@ def transcrever_e_calcular(caminho_audio):
         
     texto = ""
     try:
+        # Forçar explicitamente Português do Brasil com prompt contextual escolar
         resultado = modelo_whisper.transcribe(
             caminho_audio, 
             language="pt", 
             task="transcribe", 
-            temperature=0.0
+            temperature=0.0,
+            initial_prompt="Avaliação de leitura escolar em português do Brasil. O aluno lê o texto em voz alta palavra por palavra."
         )
         texto = resultado.get("text", "").strip()
     except Exception as e:
@@ -137,20 +139,19 @@ with aba1:
         else:
             caminho_audio_temp = None
             if audio_file is not None:
-                # Usar extensão .webm para suportar perfeitamente gravações de telemóveis
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp:
                     tmp.write(audio_file.read())
                     caminho_audio_temp = tmp.name
             
-            with st.spinner("A inteligência artificial está a transcrever o áudio e a calcular a fluência..."):
+            with st.spinner("A inteligência artificial está a transcrever o áudio em português do Brasil e a calcular a fluência..."):
                 texto_auto, duracao_auto = transcrever_e_calcular(caminho_audio_temp)
             
             tempo_real = duracao_auto if duracao_auto > 0 else 15.0
             
-            # Se o campo manual estiver vazio, preenche com a transcrição automática
+            # Preenche automaticamente a caixa de texto se estiver vazia
             if not st.session_state.texto_transcrito_manual.strip() and texto_auto:
                 st.session_state.texto_transcrito_manual = texto_auto
-                st.rerun() # Recarrega para exibir o texto imediatamente na caixa
+                st.rerun()
                 
             texto_a_usar = st.session_state.texto_transcrito_manual.strip()
             if not texto_a_usar:
@@ -287,3 +288,4 @@ with aba2:
                     st.download_button("📥 Descarregar Base Completa desta Turma (CSV)", f_csv_dl, file_name=f_csv, mime="text/csv")
         else:
             st.info("Ainda não existem registos guardados para este nome de professor/turma.")
+            
