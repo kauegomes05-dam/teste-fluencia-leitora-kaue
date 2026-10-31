@@ -76,6 +76,14 @@ def carregar_tabela_turma(nome_professor):
     df_vazio = pd.DataFrame(columns=["Data/Hora", "Professor/Turma", "Aluno", "Ano", "Precisao (%)", "Ritmo Real (PPM)", "Meta (PPM)", "Nivel Desempenho", "Tempo (s)", "Texto Lido", "Audio"])
     return df_vazio, None
 
+# Inicializar o estado da sessão para permitir reset limpo
+if "nome_professor" not in st.session_state: st.session_state.nome_professor = ""
+if "nome_aluno" not in st.session_state: st.session_state.nome_aluno = ""
+if "ano_escolar" not in st.session_state: st.session_state.ano_escolar = 2
+if "texto_original" not in st.session_state: st.session_state.texto_original = ""
+if "texto_transcrito_manual" not in st.session_state: st.session_state.texto_transcrito_manual = ""
+if "diagnostico_gerado" not in st.session_state: st.session_state.diagnostico_gerado = None
+
 # Criar separadores (Tabs)
 aba1, aba2 = st.tabs(["📝 Nova Avaliação Individual", "📊 Painel e Histórico da Turma"])
 
@@ -84,13 +92,16 @@ with aba1:
     
     col1, col2 = st.columns(2)
     with col1:
-        nome_professor = st.text_input("Nome do Professor / Turma", value="", placeholder="Ex: Prof. Kauê - 3º Ano A")
+        st.session_state.nome_professor = st.text_input("Nome do Professor / Turma", value=st.session_state.nome_professor, placeholder="Ex: Prof. Kauê - 3º Ano A")
     with col2:
-        nome_aluno = st.text_input("Nome Completo do Aluno", value="", placeholder="Digite o nome do estudante...")
+        st.session_state.nome_aluno = st.text_input("Nome Completo do Aluno", value=st.session_state.nome_aluno, placeholder="Digite o nome do estudante...")
         
     col3, col4 = st.columns(2)
     with col3:
-        ano_escolar = st.selectbox("Ano Escolar", options=[1, 2, 3, 4, 5], index=2)
+        indices_anos = {1: 0, 2: 1, 3: 2, 4: 3, 5: 4}
+        idx_atual = indices_anos.get(st.session_state.ano_escolar, 2)
+        escolha_ano = st.selectbox("Ano Escolar", options=[1, 2, 3, 4, 5], index=idx_atual)
+        st.session_state.ano_escolar = escolha_ano
     with col4:
         st.markdown("<br>", unsafe_allow_html=True)
         
@@ -98,24 +109,32 @@ with aba1:
     
     col_t1, col_t2 = st.columns(2)
     with col_t1:
-        texto_original = st.text_area("Texto Original (Referência)", placeholder="Digite o título na 1ª linha e o texto nas linhas abaixo...", height=150)
+        st.session_state.texto_original = st.text_area("Texto Original (Referência)", value=st.session_state.texto_original, placeholder="Digite o título na 1ª linha e o texto nas linhas abaixo...", height=150)
     with col_t2:
-        texto_transcrito_manual = st.text_area("Texto Lido (Transcrito por IA ou ajustável)", placeholder="Deixe em branco para transcrever automaticamente pelo microfone...", height=150)
+        st.session_state.texto_transcrito_manual = st.text_area("Texto Lido (Transcrito por IA ou ajustável)", value=st.session_state.texto_transcrito_manual, placeholder="Deixe em branco para transcrever automaticamente pelo microfone...", height=150)
 
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
         gerar_diagnostico = st.button("🚀 Gerar Diagnóstico Individual do Aluno", type="primary", use_container_width=True)
     with col_btn2:
         if st.button("🔄 Refazer / Limpar Avaliação", use_container_width=True):
+            st.session_state.nome_aluno = ""
+            st.session_state.texto_original = ""
+            st.session_state.texto_transcrito_manual = ""
+            st.session_state.diagnostico_gerado = None
             st.rerun()
 
     if gerar_diagnostico:
-        if not nome_professor.strip():
-            nome_professor = "Professor_Anonimo"
-        if not nome_aluno.strip():
-            nome_aluno = "Aluno Anonimo"
+        prof_val = st.session_state.nome_professor.strip()
+        aluno_val = st.session_state.nome_aluno.strip()
+        orig_val = st.session_state.texto_original.strip()
+        
+        if not prof_val:
+            prof_val = "Professor_Anonimo"
+        if not aluno_val:
+            aluno_val = "Aluno Anonimo"
             
-        if not texto_original.strip():
+        if not orig_val:
             st.warning("⚠️ Por favor, preencha o campo 'Texto Original (Referência)' antes de gerar o diagnóstico.")
         else:
             caminho_audio_temp = None
@@ -127,8 +146,8 @@ with aba1:
             texto_auto, duracao_auto = transcrever_e_calcular(caminho_audio_temp)
             tempo_real = duracao_auto if duracao_auto > 0 else 15.0
             
-            texto_a_usar = texto_transcrito_manual
-            if not texto_a_usar or not texto_a_usar.strip():
+            texto_a_usar = st.session_state.texto_transcrito_manual.strip()
+            if not texto_a_usar:
                 texto_a_usar = texto_auto
                 
             nome_ficheiro_audio = "Sem_Audio"
@@ -136,20 +155,19 @@ with aba1:
                 try:
                     pasta_audios = "audios_turma"
                     os.makedirs(pasta_audios, exist_ok=True)
-                    nome_limpo_aluno = re.sub(r'[^\w\s]', '', nome_aluno).strip().replace(' ', '_')
+                    nome_limpo_aluno = re.sub(r'[^\w\s]', '', aluno_val).strip().replace(' ', '_')
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     nome_ficheiro_audio = f"{nome_limpo_aluno}_{timestamp}.wav"
                     shutil.copy(caminho_audio_temp, os.path.join(pasta_audios, nome_ficheiro_audio))
                 except Exception:
                     pass
 
-            lista_original_raw = texto_original.split()
+            lista_original_raw = orig_val.split()
             lista_lida_raw = texto_a_usar.split()
             
             palavras_originais_limpas = [limpar_palavra(p) for p in lista_original_raw]
             palavras_lidas_limpas = [limpar_palavra(p) for p in lista_lida_raw]
             
-            # Alinhamento profissional com SequenceMatcher (evita erros de desfasamento de índice)
             matcher = difflib.SequenceMatcher(None, palavras_originais_limpas, palavras_lidas_limpas)
             
             resultado_analise = []
@@ -161,8 +179,7 @@ with aba1:
                 if tag == 'equal':
                     for k in range(i2 - i1):
                         orig_orig = lista_original_raw[i1 + k]
-                        lido_orig = lista_lida_raw[j1 + k] if (j1 + k) < len(lista_lida_raw) else orig_orig
-                        resultado_analise.append((orig_orig, lido_orig, "CORRETO"))
+                        resultado_analise.append((orig_orig, orig_orig, "CORRETO"))
                         acertos += 1
                 elif tag == 'replace':
                     for k in range(max(i2 - i1, j2 - j1)):
@@ -184,7 +201,7 @@ with aba1:
             if precisao > 100: precisao = 100.0
             
             metas_ppm = {1: 35, 2: 60, 3: 90, 4: 110, 5: 130}
-            ppm_esperado = metas_ppm.get(int(ano_escolar), 80)
+            ppm_esperado = metas_ppm.get(int(st.session_state.ano_escolar), 80)
             
             minutos_gastos = tempo_real / 60 if tempo_real > 0 else 1
             ppm_real = total_palavras / minutos_gastos if minutos_gastos > 0 else 0
@@ -209,7 +226,7 @@ with aba1:
                     html_texto += f"<span style='color: #fbbf24; text-decoration: underline; font-style: italic;'>{orig} [Omitido]</span> "
             html_texto += "</div>"
             
-            st.markdown(f"### 📊 Relatório Diagnóstico: {nome_aluno} ({ano_escolar}º Ano)")
+            st.markdown(f"### 📊 Relatório Diagnóstico: {aluno_val} ({st.session_state.ano_escolar}º Ano)")
             st.markdown(f"- **Precisão de Leitura:** {precisao:.1f}%")
             st.markdown(f"- **Ritmo Real:** {round(ppm_real)} PPM (Meta esperada: {ppm_esperado} PPM)")
             st.markdown(f"- **Tempo Gasto:** {tempo_real} segundos")
@@ -219,26 +236,26 @@ with aba1:
             st.markdown(html_texto, unsafe_allow_html=True)
             
             # Guardar histórico CSV
-            ficheiro_csv = obter_nome_ficheiro_csv(nome_professor)
+            ficheiro_csv = obter_nome_ficheiro_csv(prof_val)
             file_exists = os.path.exists(ficheiro_csv)
             with open(ficheiro_csv, mode="a", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
                 if not file_exists:
                     writer.writerow(["Data/Hora", "Professor/Turma", "Aluno", "Ano", "Precisao (%)", "Ritmo Real (PPM)", "Meta (PPM)", "Nivel Desempenho", "Tempo (s)", "Texto Lido", "Audio"])
-                writer.writerow([datetime.now().strftime("%Y-%m-%d %H:%M"), nome_professor, nome_aluno, ano_escolar, f"{precisao:.1f}", round(ppm_real), ppm_esperado, nivel_desempenho, tempo_real, texto_a_usar, nome_ficheiro_audio])
+                writer.writerow([datetime.now().strftime("%Y-%m-%d %H:%M"), prof_val, aluno_val, st.session_state.ano_escolar, f"{precisao:.1f}", round(ppm_real), ppm_esperado, nivel_desempenho, tempo_real, texto_a_usar, nome_ficheiro_audio])
             
             # Gerar HTML individual para download
-            nome_limpo_arq = re.sub(r'[^\w\s]', '', nome_aluno).strip().replace(' ', '_')
+            nome_limpo_arq = re.sub(r'[^\w\s]', '', aluno_val).strip().replace(' ', '_')
             ficheiro_individual = f"relatorio_{nome_limpo_arq}.html"
             
             conteudo_html = f"""<!DOCTYPE html>
 <html lang="pt-BR">
-<head><meta charset="UTF-8"><title>Relatório - {nome_aluno}</title></head>
+<head><meta charset="UTF-8"><title>Relatório - {aluno_val}</title></head>
 <body style="font-family: Arial, sans-serif; background: #f4f6f9; padding: 20px;">
     <div style="background: #fff; padding: 25px; border-radius: 10px; max-width: 800px; margin: auto;">
         <h2>📚 Teste de Fluência Leitora - Professor Kauê</h2>
-        <p><strong>Professor / Turma:</strong> {nome_professor}</p>
-        <p><strong>Aluno:</strong> {nome_aluno} ({ano_escolar}º Ano)</p>
+        <p><strong>Professor / Turma:</strong> {prof_val}</p>
+        <p><strong>Aluno:</strong> {aluno_val} ({st.session_state.ano_escolar}º Ano)</p>
         <p><strong>Precisão:</strong> {precisao:.1f}% | <strong>Ritmo:</strong> {round(ppm_real)} PPM</p>
         <div style="background: #1e1e1e; padding: 15px; border-radius: 8px; color: #fff; margin-top: 15px;">{html_texto}</div>
     </div>
@@ -265,3 +282,4 @@ with aba2:
                     st.download_button("📥 Descarregar Base Completa desta Turma (CSV)", f_csv_dl, file_name=f_csv, mime="text/csv")
         else:
             st.info("Ainda não existem registos guardados para este nome de professor/turma.")
+            
