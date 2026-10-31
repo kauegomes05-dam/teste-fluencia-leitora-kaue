@@ -76,13 +76,12 @@ def carregar_tabela_turma(nome_professor):
     df_vazio = pd.DataFrame(columns=["Data/Hora", "Professor/Turma", "Aluno", "Ano", "Precisao (%)", "Ritmo Real (PPM)", "Meta (PPM)", "Nivel Desempenho", "Tempo (s)", "Texto Lido", "Audio"])
     return df_vazio, None
 
-# Inicializar o estado da sessão para permitir reset limpo
+# Inicializar o estado da sessão para permitir reset limpo dos campos
 if "nome_professor" not in st.session_state: st.session_state.nome_professor = ""
 if "nome_aluno" not in st.session_state: st.session_state.nome_aluno = ""
 if "ano_escolar" not in st.session_state: st.session_state.ano_escolar = 2
 if "texto_original" not in st.session_state: st.session_state.texto_original = ""
 if "texto_transcrito_manual" not in st.session_state: st.session_state.texto_transcrito_manual = ""
-if "diagnostico_gerado" not in st.session_state: st.session_state.diagnostico_gerado = None
 
 # Criar separadores (Tabs)
 aba1, aba2 = st.tabs(["📝 Nova Avaliação Individual", "📊 Painel e Histórico da Turma"])
@@ -121,7 +120,6 @@ with aba1:
             st.session_state.nome_aluno = ""
             st.session_state.texto_original = ""
             st.session_state.texto_transcrito_manual = ""
-            st.session_state.diagnostico_gerado = None
             st.rerun()
 
     if gerar_diagnostico:
@@ -282,4 +280,4 @@ with aba2:
                     st.download_button("📥 Descarregar Base Completa desta Turma (CSV)", f_csv_dl, file_name=f_csv, mime="text/csv")
         else:
             st.info("Ainda não existem registos guardados para este nome de professor/turma.")
-            
+                            
