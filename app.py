@@ -9,6 +9,7 @@ import librosa
 import torch
 import whisper
 import tempfile
+import difflib
 
 # Configuração da página
 st.set_page_config(
@@ -18,7 +19,7 @@ st.set_page_config(
 )
 
 st.title("📚 Teste de Fluência Leitora - Professor Kauê")
-st.markdown("### **Ambiente Multi-Professor / Turma Isolada**")
+st.markdown("### **Ambiente Multi-Professor / Turma Isolada (Versão Profissional)**")
 
 # Carregar o modelo Whisper em cache para otimizar a memória
 @st.cache_resource
@@ -91,7 +92,7 @@ with aba1:
     with col3:
         ano_escolar = st.selectbox("Ano Escolar", options=[1, 2, 3, 4, 5], index=2)
     with col4:
-        st.markdown("<br>", unsafe_allow_html=True) # Espaçamento
+        st.markdown("<br>", unsafe_allow_html=True)
         
     audio_file = st.audio_input("Gravação da Leitura (Microfone)")
     
@@ -104,6 +105,9 @@ with aba1:
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
         gerar_diagnostico = st.button("🚀 Gerar Diagnóstico Individual do Aluno", type="primary", use_container_width=True)
+    with col_btn2:
+        if st.button("🔄 Refazer / Limpar Avaliação", use_container_width=True):
+            st.rerun()
 
     if gerar_diagnostico:
         if not nome_professor.strip():
@@ -145,28 +149,39 @@ with aba1:
             palavras_originais_limpas = [limpar_palavra(p) for p in lista_original_raw]
             palavras_lidas_limpas = [limpar_palavra(p) for p in lista_lida_raw]
             
+            # Alinhamento profissional com SequenceMatcher (evita erros de desfasamento de índice)
+            matcher = difflib.SequenceMatcher(None, palavras_originais_limpas, palavras_lidas_limpas)
+            
             resultado_analise = []
             erros_detalhados = []
             acertos = 0
-            
-            for i, palavra_origem_limpa in enumerate(palavras_originais_limpas):
-                palavra_original_original = lista_original_raw[i]
-                if i < len(palavras_lidas_limpas):
-                    palavra_falada_limpa = palavras_lidas_limpas[i]
-                    palavra_falada_original = lista_lida_raw[i] if i < len(lista_lida_raw) else ""
-                    
-                    if palavra_falada_limpa == palavra_origem_limpa:
-                        resultado_analise.append((palavra_original_original, palavra_falada_original, "CORRETO"))
-                        acertos += 1
-                    else:
-                        resultado_analise.append((palavra_original_original, palavra_falada_original, "ERRADO"))
-                        erros_detalhados.append(f"Esperado: [{palavra_original_original}] --> Lido: [{palavra_falada_original}]")
-                else:
-                    resultado_analise.append((palavra_original_original, "", "OMITIDO"))
-                    erros_detalhados.append(f"Esperado: [{palavra_original_original}] --> Omitido")
-                    
             total_palavras = len(palavras_originais_limpas)
+            
+            for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+                if tag == 'equal':
+                    for k in range(i2 - i1):
+                        orig_orig = lista_original_raw[i1 + k]
+                        lido_orig = lista_lida_raw[j1 + k] if (j1 + k) < len(lista_lida_raw) else orig_orig
+                        resultado_analise.append((orig_orig, lido_orig, "CORRETO"))
+                        acertos += 1
+                elif tag == 'replace':
+                    for k in range(max(i2 - i1, j2 - j1)):
+                        orig_orig = lista_original_raw[i1 + k] if (i1 + k) < i2 else ""
+                        lido_orig = lista_lida_raw[j1 + k] if (j1 + k) < j2 else ""
+                        if orig_orig and lido_orig:
+                            resultado_analise.append((orig_orig, lido_orig, "ERRADO"))
+                            erros_detalhados.append(f"Esperado: [{orig_orig}] --> Lido: [{lido_orig}]")
+                        elif orig_orig:
+                            resultado_analise.append((orig_orig, "", "OMITIDO"))
+                            erros_detalhados.append(f"Esperado: [{orig_orig}] --> Omitido")
+                elif tag == 'delete':
+                    for k in range(i2 - i1):
+                        orig_orig = lista_original_raw[i1 + k]
+                        resultado_analise.append((orig_orig, "", "OMITIDO"))
+                        erros_detalhados.append(f"Esperado: [{orig_orig}] --> Omitido")
+
             precisao = (acertos / total_palavras) * 100 if total_palavras > 0 else 0
+            if precisao > 100: precisao = 100.0
             
             metas_ppm = {1: 35, 2: 60, 3: 90, 4: 110, 5: 130}
             ppm_esperado = metas_ppm.get(int(ano_escolar), 80)
@@ -215,7 +230,6 @@ with aba1:
             # Gerar HTML individual para download
             nome_limpo_arq = re.sub(r'[^\w\s]', '', nome_aluno).strip().replace(' ', '_')
             ficheiro_individual = f"relatorio_{nome_limpo_arq}.html"
-            texto_erros_formatado = "<br>".join(erros_detalhados) if erros_detalhados else "Nenhum erro detetado (100% de precisão)."
             
             conteudo_html = f"""<!DOCTYPE html>
 <html lang="pt-BR">
