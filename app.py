@@ -32,7 +32,7 @@ with st.spinner("A carregar o modelo de Inteligência Artificial Whisper (aguard
 def limpar_palavra(palavra):
     return re.sub(r'[^\w\s]', '', palavra).lower().strip()
 
-def transcrever_e_calcular(caminho_audio):
+def transcrever_e_calcular(caminho_audio, texto_referencia):
     if not caminho_audio:
         return "", 0.0
     
@@ -44,13 +44,15 @@ def transcrever_e_calcular(caminho_audio):
         
     texto = ""
     try:
-        # Forçar explicitamente Português do Brasil com prompt contextual escolar
+        # TRUQUE PROFISSIONAL: Forçar o Whisper a usar o texto original como contexto exato
+        prompt_contexto = f"O aluno está a ler em voz alta exatamente o seguinte texto em português do Brasil: {texto_referencia}"
+        
         resultado = modelo_whisper.transcribe(
             caminho_audio, 
             language="pt", 
             task="transcribe", 
             temperature=0.0,
-            initial_prompt="Avaliação de leitura escolar em português do Brasil. O aluno lê o texto em voz alta palavra por palavra."
+            initial_prompt=prompt_contexto
         )
         texto = resultado.get("text", "").strip()
     except Exception as e:
@@ -143,8 +145,8 @@ with aba1:
                     tmp.write(audio_file.read())
                     caminho_audio_temp = tmp.name
             
-            with st.spinner("A inteligência artificial está a transcrever o áudio em português do Brasil e a calcular a fluência..."):
-                texto_auto, duracao_auto = transcrever_e_calcular(caminho_audio_temp)
+            with st.spinner("A inteligência artificial está a transcrever com base no texto de referência..."):
+                texto_auto, duracao_auto = transcrever_e_calcular(caminho_audio_temp, orig_val)
             
             tempo_real = duracao_auto if duracao_auto > 0 else 15.0
             
@@ -288,4 +290,3 @@ with aba2:
                     st.download_button("📥 Descarregar Base Completa desta Turma (CSV)", f_csv_dl, file_name=f_csv, mime="text/csv")
         else:
             st.info("Ainda não existem registos guardados para este nome de professor/turma.")
-            
