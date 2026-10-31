@@ -21,7 +21,7 @@ st.set_page_config(
 st.title("📚 Teste de Fluência Leitora - Professor Kauê")
 st.markdown("### **Ambiente Multi-Professor / Turma Isolada (Versão Profissional)**")
 
-# Carregar o modelo Whisper otimizado (base) para evitar sobrecarga de memória no Streamlit Cloud
+# Carregar o modelo Whisper otimizado (base) para evitar sobrecarga de memória
 @st.cache_resource
 def carregar_whisper():
     return whisper.load_model("base")
@@ -76,7 +76,7 @@ def carregar_tabela_turma(nome_professor):
     df_vazio = pd.DataFrame(columns=["Data/Hora", "Professor/Turma", "Aluno", "Ano", "Precisao (%)", "Ritmo Real (PPM)", "Meta (PPM)", "Nivel Desempenho", "Tempo (s)", "Texto Lido", "Audio"])
     return df_vazio, None
 
-# Inicializar o estado da sessão para permitir reset limpo dos campos
+# Inicializar o estado da sessão
 if "nome_professor" not in st.session_state: st.session_state.nome_professor = ""
 if "nome_aluno" not in st.session_state: st.session_state.nome_aluno = ""
 if "ano_escolar" not in st.session_state: st.session_state.ano_escolar = 2
@@ -137,7 +137,8 @@ with aba1:
         else:
             caminho_audio_temp = None
             if audio_file is not None:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+                # Usar extensão .webm para suportar perfeitamente gravações de telemóveis
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp:
                     tmp.write(audio_file.read())
                     caminho_audio_temp = tmp.name
             
@@ -146,10 +147,14 @@ with aba1:
             
             tempo_real = duracao_auto if duracao_auto > 0 else 15.0
             
-            texto_a_usar = st.session_state.texto_transcrito_manual.strip()
-            if not texto_a_usar and texto_auto:
-                texto_a_usar = texto_auto
+            # Se o campo manual estiver vazio, preenche com a transcrição automática
+            if not st.session_state.texto_transcrito_manual.strip() and texto_auto:
                 st.session_state.texto_transcrito_manual = texto_auto
+                st.rerun() # Recarrega para exibir o texto imediatamente na caixa
+                
+            texto_a_usar = st.session_state.texto_transcrito_manual.strip()
+            if not texto_a_usar:
+                texto_a_usar = texto_auto
                 
             nome_ficheiro_audio = "Sem_Audio"
             if caminho_audio_temp:
@@ -158,7 +163,7 @@ with aba1:
                     os.makedirs(pasta_audios, exist_ok=True)
                     nome_limpo_aluno = re.sub(r'[^\w\s]', '', aluno_val).strip().replace(' ', '_')
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    nome_ficheiro_audio = f"{nome_limpo_aluno}_{timestamp}.wav"
+                    nome_ficheiro_audio = f"{nome_limpo_aluno}_{timestamp}.webm"
                     shutil.copy(caminho_audio_temp, os.path.join(pasta_audios, nome_ficheiro_audio))
                 except Exception:
                     pass
