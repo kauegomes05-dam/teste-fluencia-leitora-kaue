@@ -21,10 +21,10 @@ st.set_page_config(
 st.title("📚 Teste de Fluência Leitora - Professor Kauê")
 st.markdown("### **Ambiente Multi-Professor / Turma Isolada (Versão Profissional)**")
 
-# Carregar o modelo Whisper em cache para otimizar a memória
+# Carregar o modelo Whisper otimizado (base) para evitar sobrecarga de memória no Streamlit Cloud
 @st.cache_resource
 def carregar_whisper():
-    return whisper.load_model("small")
+    return whisper.load_model("base")
 
 with st.spinner("A carregar o modelo de Inteligência Artificial Whisper (aguarde apenas no primeiro acesso)..."):
     modelo_whisper = carregar_whisper()
@@ -48,12 +48,11 @@ def transcrever_e_calcular(caminho_audio):
             caminho_audio, 
             language="pt", 
             task="transcribe", 
-            temperature=0.0,
-            initial_prompt="Avaliação de leitura escolar em português do Brasil. O aluno lê o texto em voz alta palavra por palavra."
+            temperature=0.0
         )
         texto = resultado.get("text", "").strip()
     except Exception as e:
-        st.error(f"Erro detalhado na transcrição do Whisper: {e}")
+        st.error(f"⚠️ Erro ao transcrever áudio com o Whisper: {e}")
         texto = ""
         
     return texto, duracao
@@ -142,12 +141,15 @@ with aba1:
                     tmp.write(audio_file.read())
                     caminho_audio_temp = tmp.name
             
-            texto_auto, duracao_auto = transcrever_e_calcular(caminho_audio_temp)
+            with st.spinner("A inteligência artificial está a transcrever o áudio e a calcular a fluência..."):
+                texto_auto, duracao_auto = transcrever_e_calcular(caminho_audio_temp)
+            
             tempo_real = duracao_auto if duracao_auto > 0 else 15.0
             
             texto_a_usar = st.session_state.texto_transcrito_manual.strip()
-            if not texto_a_usar:
+            if not texto_a_usar and texto_auto:
                 texto_a_usar = texto_auto
+                st.session_state.texto_transcrito_manual = texto_auto
                 
             nome_ficheiro_audio = "Sem_Audio"
             if caminho_audio_temp:
@@ -280,4 +282,3 @@ with aba2:
                     st.download_button("📥 Descarregar Base Completa desta Turma (CSV)", f_csv_dl, file_name=f_csv, mime="text/csv")
         else:
             st.info("Ainda não existem registos guardados para este nome de professor/turma.")
-            
