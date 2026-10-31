@@ -19,7 +19,6 @@ st.set_page_config(
 )
 
 st.title("📚 Teste de Fluência Leitora - Professor Kauê")
-st.markdown("### **Ambiente Multi-Professor / Turma Isolada (Versão Profissional com IA)**")
 
 # Carregar o modelo Whisper otimizado (base) em cache
 @st.cache_resource
@@ -44,10 +43,8 @@ def transcrever_e_calcular(caminho_audio, texto_referencia):
         
     texto = ""
     try:
-        # Prompt contextual escolar estrito para guiar o Whisper na direção do texto original
         prompt_contexto = f"O aluno lê o seguinte texto em voz alta em português do Brasil: {texto_referencia}"
         
-        # Ativar word_timestamps para capturar o alinhamento de cada palavra falada
         resultado = modelo_whisper.transcribe(
             caminho_audio, 
             language="pt", 
@@ -152,7 +149,6 @@ with aba1:
             
             tempo_real = duracao_auto if duracao_auto > 0 else 15.0
             
-            # Preenche automaticamente a caixa de texto se estiver vazia e recarrega para exibir
             if not st.session_state.texto_transcrito_manual.strip() and texto_auto:
                 st.session_state.texto_transcrito_manual = texto_auto
                 st.rerun()
@@ -197,10 +193,8 @@ with aba1:
                         orig_orig = lista_original_raw[i1 + k] if (i1 + k) < i2 else ""
                         lido_orig = lista_lida_raw[j1 + k] if (j1 + k) < j2 else ""
                         if orig_orig and lido_orig:
-                            # Verificar similaridade fonética/textual (ex: roupa vs ropa)
                             sub_matcher = difflib.SequenceMatcher(None, limpar_palavra(orig_orig), limpar_palavra(lido_orig))
                             if sub_matcher.ratio() >= 0.6:
-                                # Considerado uma troca leve / aproximação (conta como incorreto mas sinaliza proximidade)
                                 resultado_analise.append((orig_orig, lido_orig, "ERRADO"))
                                 erros_detalhados.append(f"Esperado: [{orig_orig}] --> Lido com variação: [{lido_orig}]")
                             else:
@@ -253,7 +247,6 @@ with aba1:
             st.markdown("#### 🔍 Análise Visual Detalhada:")
             st.markdown(html_texto, unsafe_allow_html=True)
             
-            # Guardar histórico CSV
             ficheiro_csv = obter_nome_ficheiro_csv(prof_val)
             file_exists = os.path.exists(ficheiro_csv)
             with open(ficheiro_csv, mode="a", newline="", encoding="utf-8") as f:
@@ -262,7 +255,6 @@ with aba1:
                     writer.writerow(["Data/Hora", "Professor/Turma", "Aluno", "Ano", "Precisao (%)", "Ritmo Real (PPM)", "Meta (PPM)", "Nivel Desempenho", "Tempo (s)", "Texto Lido", "Audio"])
                 writer.writerow([datetime.now().strftime("%Y-%m-%d %H:%M"), prof_val, aluno_val, st.session_state.ano_escolar, f"{precisao:.1f}", round(ppm_real), ppm_esperado, nivel_desempenho, tempo_real, texto_a_usar, nome_ficheiro_audio])
             
-            # Gerar HTML individual para download
             nome_limpo_arq = re.sub(r'[^\w\s]', '', aluno_val).strip().replace(' ', '_')
             ficheiro_individual = f"relatorio_{nome_limpo_arq}.html"
             
