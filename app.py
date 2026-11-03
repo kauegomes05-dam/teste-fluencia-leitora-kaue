@@ -43,13 +43,19 @@ def transcrever_e_calcular(caminho_audio, texto_referencia):
         
     texto = ""
     try:
-        prompt_contexto = f"O aluno lê o seguinte texto em voz alta em português do Brasil: {texto_referencia}"
+        # PROMPT ANTI-CORREÇÃO: Obriga o Whisper a transcrever o som bruto sem normalizar grafias infantis
+        prompt_contexto = (
+            f"O aluno está a ler o texto de referência: '{texto_referencia}'. "
+            "ATENÇÃO: Transcreva exatamente os sons emitidos pelo aluno, incluindo trocas de letras "
+            "(como 'ropa' em vez de 'roupa'), omissões, hesitações ou aproximações fonéticas. "
+            "NÃO corrija a ortografia para a norma culta; registre fielmente o que foi falado."
+        )
         
         resultado = modelo_whisper.transcribe(
             caminho_audio, 
             language="pt", 
             task="transcribe", 
-            temperature=0.0,
+            temperature=0.2, # Pequena variação permitida para evitar que o modelo force palavras perfeitas
             word_timestamps=True,
             initial_prompt=prompt_contexto
         )
@@ -144,7 +150,7 @@ with aba1:
                     tmp.write(audio_file.read())
                     caminho_audio_temp = tmp.name
             
-            with st.spinner("A inteligência artificial está a analisar a pronúncia e o ritmo da leitura..."):
+            with st.spinner("A inteligência artificial está a detetar desvios fonéticos e ritmo..."):
                 texto_auto, duracao_auto = transcrever_e_calcular(caminho_audio_temp, orig_val)
             
             tempo_real = duracao_auto if duracao_auto > 0 else 15.0
@@ -194,20 +200,26 @@ with aba1:
                         lido_orig = lista_lida_raw[j1 + k] if (j1 + k) < j2 else ""
                         if orig_orig and lido_orig:
                             sub_matcher = difflib.SequenceMatcher(None, limpar_palavra(orig_orig), limpar_palavra(lido_orig))
-                            if sub_matcher.ratio() >= 0.6:
-                                resultado_analise.append((orig_orig, lido_orig, "ERRADO"))
-                                erros_detalhados.append(f"Esperado: [{orig_orig}] --> Lido com variação: [{lido_orig}]")
+                            razao_sim = sub_matcher.ratio()
+                            
+                            if razao_sim >= 0.5:
+                                # Troca leve / Aproximação fonética (ex: roupa vs ropa)
+                                # Conta meio acerto pedagógico ou sinaliza subtilmente sem penalizar excessivamente
+                                resultado_analise.append((orig_orig, lido_orig, "VARIACAO_FONETICA"))
+                                acertos += 0.5 # Benefício pedagógico leve para não prejudicar injustamente
+                                erros_detalhados.append(f"Troca fonética: Esperado [{orig_orig}] --> Lido [{lido_orig}]")
                             else:
+                                # Erro estrutural / Palavra incorreta
                                 resultado_analise.append((orig_orig, lido_orig, "ERRADO"))
-                                erros_detalhados.append(f"Esperado: [{orig_orig}] --> Lido incorreto: [{lido_orig}]")
+                                erros_detalhados.append(f"Incorreto: Esperado [{orig_orig}] --> Lido [{lido_orig}]")
                         elif orig_orig:
                             resultado_analise.append((orig_orig, "", "OMITIDO"))
-                            erros_detalhados.append(f"Esperado: [{orig_orig}] --> Omitido")
+                            erros_detalhados.append(f"Omitido: [{orig_orig}]")
                 elif tag == 'delete':
                     for k in range(i2 - i1):
                         orig_orig = lista_original_raw[i1 + k]
                         resultado_analise.append((orig_orig, "", "OMITIDO"))
-                        erros_detalhados.append(f"Esperado: [{orig_orig}] --> Omitido")
+                        erros_detalhados.append(f"Omitido: [{orig_orig}]")
 
             precisao = (acertos / total_palavras) * 100 if total_palavras > 0 else 0
             if precisao > 100: precisao = 100.0
@@ -228,14 +240,17 @@ with aba1:
             else:
                 nivel_desempenho = "🟢 Avançado: Excelente fluência, ritmo adequado e alto índice de acertos."
 
+            # Cores na interface visual: Verde (Correto), Laranja (Variação Fonética / Troca de letra), Vermelho (Errado/Omitido)
             html_texto = "<div style='font-size: 18px; line-height: 1.8; background-color: #1e1e1e; padding: 15px; border-radius: 8px; color: #ffffff;'>"
             for orig, lido, status in resultado_analise:
                 if status == "CORRETO":
                     html_texto += f"<span style='color: #4ade80; font-weight: bold;'>{orig}</span> "
+                elif status == "VARIACAO_FONETICA":
+                    html_texto += f"<span style='color: #fbbf24; text-decoration: underline; font-weight: bold;' title='Troca fonética'>⚡{orig} ({lido})</span> "
                 elif status == "ERRADO":
                     html_texto += f"<span style='color: #f87171; text-decoration: line-through; font-weight: bold;'>{orig}</span><span style='color: #f87171; font-size: 15px; font-weight: bold;'>({lido})</span> "
                 else:
-                    html_texto += f"<span style='color: #fbbf24; text-decoration: underline; font-style: italic;'>{orig} [Omitido]</span> "
+                    html_texto += f"<span style='color: #ef4444; text-decoration: underline; font-style: italic;'>{orig} [Omitido]</span> "
             html_texto += "</div>"
             
             st.markdown(f"### 📊 Relatório Diagnóstico: {aluno_val} ({st.session_state.ano_escolar}º Ano)")
@@ -244,9 +259,14 @@ with aba1:
             st.markdown(f"- **Tempo Gasto:** {tempo_real} segundos")
             st.markdown(f"- **Nível:** {nivel_desempenho}")
             
-            st.markdown("#### 🔍 Análise Visual Detalhada:")
+            st.markdown("#### 🔍 Análise Visual Detalhada (Legenda: 🟢 Correto | ⚡ Variação Fonética/Troca | 🔴 Erro/Omissão):")
             st.markdown(html_texto, unsafe_allow_html=True)
             
+            if erros_detalhados:
+                with st.expander("📋 Ver Registo Detalhado de Desvios para Intervenção Pedagógica"):
+                    for err in erros_detalhados:
+                        st.markdown(f"- {err}")
+
             ficheiro_csv = obter_nome_ficheiro_csv(prof_val)
             file_exists = os.path.exists(ficheiro_csv)
             with open(ficheiro_csv, mode="a", newline="", encoding="utf-8") as f:
