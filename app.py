@@ -43,21 +43,23 @@ def transcrever_e_calcular(caminho_audio, texto_referencia):
         
     texto = ""
     try:
-        prompt_contexto = (
-            f"O aluno está a ler o texto de referência: '{texto_referencia}'. "
-            "ATENÇÃO: Transcreva fielmente os sons emitidos, incluindo trocas de letras, omissões, "
-            "pausas longas ou aproximações fonéticas em português do Brasil."
-        )
+        # Prompt restritivo estrito em português do Brasil
+        prompt_contexto = f"O aluno lê em voz alta o texto: {texto_referencia}"
         
         resultado = modelo_whisper.transcribe(
             caminho_audio, 
             language="pt", 
             task="transcribe", 
-            temperature=0.2,
+            temperature=0.0, # Zero criatividade para evitar invenções
+            condition_on_previous_text=False, # Impede que o modelo entre em loop ou alucine outros idiomas
             word_timestamps=True,
             initial_prompt=prompt_contexto
         )
         texto = resultado.get("text", "").strip()
+        
+        # Limpar eventuais artefactos de HTML ou tags indesejadas geradas pela IA
+        texto = re.sub(r'<[^>]*>', '', texto)
+        
     except Exception as e:
         st.error(f"⚠️ Erro ao transcrever áudio com o Whisper: {e}")
         texto = ""
@@ -121,7 +123,7 @@ with aba1:
     with col_t1:
         st.session_state.texto_original = st.text_area("Texto Original (Referência)", value=st.session_state.texto_original, placeholder="Digite o título na 1ª linha e o texto nas linhas abaixo...", height=150)
     with col_t2:
-        st.session_state.texto_transcrito_manual = st.text_area("Texto Lido (Transcrito por IA ou ajustável)", value=st.session_state.texto_transcrito_manual, placeholder="Deixe em branco para transcrever automaticamente pelo microfone...", height=150)
+        st.session_state.texto_transcrito_manual = st.text_area("Texto Lido (Transcrito por IA ou ajustável - Edite se necessário)", value=st.session_state.texto_transcrito_manual, placeholder="Deixe em branco para transcrever automaticamente pelo microfone...", height=150)
 
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
@@ -152,7 +154,7 @@ with aba1:
                     tmp.write(audio_file.read())
                     caminho_audio_temp = tmp.name
             
-            with st.spinner("A analisar Velocidade, Precisão, Prosódia e Padrões de Leitura..."):
+            with st.spinner("A analisar a leitura com rigor e estabilidade..."):
                 texto_auto, duracao_auto = transcrever_e_calcular(caminho_audio_temp, orig_val)
             
             tempo_real = duracao_auto if duracao_auto > 0 else 15.0
@@ -223,7 +225,6 @@ with aba1:
                         total_erros += 1
                         erros_detalhados.append(f"Omitido: [{orig_orig}]")
 
-            # 1. Componentes Principais da Fluência Leitora
             taxa_acertos = (acertos / total_palavras) * 100 if total_palavras > 0 else 0
             if taxa_acertos > 100: taxa_acertos = 100.0
             
@@ -234,8 +235,6 @@ with aba1:
             meta_esperada = metas_ppm.get(int(st.session_state.ano_escolar), 80)
             razao_ritmo = velocidade_ppm / meta_esperada if meta_esperada > 0 else 0
             
-            # Cálculo heurístico de Prosódia baseado em pausas, ritmo e continuidade consecutiva
-            # (Avalia a consistência temporal da leitura por palavra versus a duração total)
             if tempo_real > (total_palavras * 2.5):
                 prosodia_indicador = "Pausada / Fragmentada (Hesitações frequentes)"
             elif tempo_real < (total_palavras * 0.8):
@@ -243,7 +242,6 @@ with aba1:
             else:
                 prosodia_indicador = "Fluida com continuidade e ritmo adequado"
 
-            # 2. Definição Oficial dos Níveis de Proficiência
             if taxa_acertos < 70 or razao_ritmo < 0.5:
                 nivel_proficiencia = "🔴 Abaixo do básico"
                 interpretacao_nivel = "Fluência ainda muito distante das expectativas para a escolaridade."
@@ -257,7 +255,6 @@ with aba1:
                 nivel_proficiencia = "🟢 Avançado"
                 interpretacao_nivel = "Apresenta desempenho superior às expectativas previstas."
 
-            # 3. Orientações Pedagógicas Práticas Baseadas no Perfil Diagnóstico
             if velocidade_ppm < meta_esperada * 0.6 and taxa_acertos < 80:
                 orientacao_pratica = "Baixa velocidade e poucos acertos: trabalhar reconhecimento de palavras, leitura repetida e consciência fonológica."
             elif velocidade_ppm >= meta_esperada * 0.8 and taxa_acertos < 85:
@@ -267,7 +264,6 @@ with aba1:
             else:
                 orientacao_pratica = "Boa fluência: ampliar o repertório textual e trabalhar leitura expressiva, inferências e compreensão."
 
-            # Renderização Visual da Análise
             html_texto = "<div style='font-size: 18px; line-height: 1.8; background-color: #1e1e1e; padding: 15px; border-radius: 8px; color: #ffffff;'>"
             for orig, lido, status in resultado_analise:
                 if status == "CORRETO":
@@ -282,7 +278,6 @@ with aba1:
             
             st.markdown(f"### 📊 Relatório Diagnóstico: {aluno_val} ({st.session_state.ano_escolar}º Ano)")
             
-            # Tabela de Indicadores-Chave
             df_indicadores = pd.DataFrame({
                 "Indicador": ["Velocidade", "Taxa de acertos", "Índice de erros", "Prosódia", "Nível de Proficiência"],
                 "O que permite verificar / Resultado": [
@@ -305,7 +300,6 @@ with aba1:
                 st.markdown("#### 🎧 Áudio da Leitura Realizada:")
                 st.audio(caminho_audio_temp)
 
-            # Guardar Histórico CSV
             ficheiro_csv = obter_nome_ficheiro_csv(prof_val)
             file_exists = os.path.exists(ficheiro_csv)
             with open(ficheiro_csv, mode="a", newline="", encoding="utf-8") as f:
@@ -322,7 +316,6 @@ with aba1:
                     nivel_proficiencia, tempo_real, nome_ficheiro_audio
                 ])
             
-            # Gerar HTML individual para download
             nome_limpo_arq = re.sub(r'[^\w\s]', '', aluno_val).strip().replace(' ', '_')
             ficheiro_individual = f"relatorio_{nome_limpo_arq}.html"
             
