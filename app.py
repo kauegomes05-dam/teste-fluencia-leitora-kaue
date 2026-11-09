@@ -1,365 +1,329 @@
 import streamlit as st
-import csv
 import pandas as pd
-from datetime import datetime
-import os
-import re
-import shutil
-import librosa
-import torch
 import whisper
 import tempfile
+import os
+import re
+import csv
+import html
 import difflib
+from datetime import datetime
+from pathlib import Path
 
-# Configuração da página
-st.set_page_config(
-    page_title="Teste de Fluência Leitora - Professor Kauê",
-    page_icon="📚",
-    layout="wide"
-)
+# ------------------------------------------------------------
+# Fluência Leitora - versão inicial (MVP)
+# Leitura completa: gravação, transcrição, comparação e relatório.
+# ------------------------------------------------------------
 
-st.title("📚 Teste de Fluência Leitora - Professor Kauê")
+st.set_page_config(page_title="Fluência Leitora | Anos Iniciais", page_icon="📚", layout="wide")
+st.title("📚 Fluência Leitora — Anos Iniciais")
+st.caption("Avaliação individual de leitura completa | 1º ao 5º ano")
 
-# Carregar o modelo Whisper otimizado (base) em cache
+DATA_DIR = Path("dados_fluencia")
+DATA_DIR.mkdir(exist_ok=True)
+HISTORY_FILE = DATA_DIR / "historico.csv"
+
 @st.cache_resource
 def carregar_whisper():
+    # Modelo base oferece equilíbrio entre qualidade e desempenho.
     return whisper.load_model("base")
 
-with st.spinner("A carregar o modelo de Inteligência Artificial Whisper (aguarde apenas no primeiro acesso)..."):
-    modelo_whisper = carregar_whisper()
+def normalizar_palavra(p):
+    p = p.lower().strip()
+    # Mantém letras e números, incluindo acentos e caracteres Unicode.
+    return re.sub(r"[^\w]", "", p, flags=re.UNICODE)
 
-def limpar_palavra(palavra):
-    return re.sub(r'[^\w\s]', '', palavra).lower().strip()
+def tokenizar(texto):
+    return [p for p in texto.split() if p.strip()]
 
-def transcrever_e_calcular(caminho_audio, texto_referencia):
-    if not caminho_audio:
-        return "", 0.0
-    
-    try:
-        duracao = librosa.get_duration(path=caminho_audio)
-        duracao = round(duracao, 1)
-    except Exception:
-        duracao = 0.0
-        
-    texto = ""
-    try:
-        # Prompt restritivo estrito em português do Brasil
-        prompt_contexto = f"O aluno lê em voz alta o texto: {texto_referencia}"
-        
-        resultado = modelo_whisper.transcribe(
-            caminho_audio, 
-            language="pt", 
-            task="transcribe", 
-            temperature=0.0, # Zero criatividade para evitar invenções
-            condition_on_previous_text=False, # Impede que o modelo entre em loop ou alucine outros idiomas
-            word_timestamps=True,
-            initial_prompt=prompt_contexto
-        )
-        texto = resultado.get("text", "").strip()
-        
-        # Limpar eventuais artefactos de HTML ou tags indesejadas geradas pela IA
-        texto = re.sub(r'<[^>]*>', '', texto)
-        
-    except Exception as e:
-        st.error(f"⚠️ Erro ao transcrever áudio com o Whisper: {e}")
-        texto = ""
-        
-    return texto, duracao
-
-def obter_nome_ficheiro_csv(nome_professor):
-    if not nome_professor or not nome_professor.strip():
-        nome_professor = "Professor_Geral"
-    limpo = re.sub(r'[^\w\s]', '', nome_professor).strip().replace(' ', '_')
-    return f"historico_{limpo}.csv"
-
-def carregar_tabela_turma(nome_professor):
-    if not nome_professor or not nome_professor.strip():
-        nome_professor = "Professor_Geral"
-    ficheiro_csv = obter_nome_ficheiro_csv(nome_professor)
-    if os.path.exists(ficheiro_csv):
+def extrair_texto_arquivo(upload):
+    if upload is None:
+        return ""
+    nome = upload.name.lower()
+    conteudo = upload.getvalue()
+    if nome.endswith(".txt"):
+        for encoding in ("utf-8", "latin-1"):
+            try:
+                return conteudo.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+        return ""
+    if nome.endswith(".docx"):
         try:
-            df = pd.read_csv(ficheiro_csv)
-            return df, ficheiro_csv
-        except Exception:
-            pass
-    df_vazio = pd.DataFrame(columns=[
-        "Data/Hora", "Professor/Turma", "Aluno", "Ano", 
-        "Velocidade (PPM)", "Taxa Acertos (%)", "Indice Erros", "Prosodia", 
-        "Nivel Proficiencia", "Tempo (s)", "Audio"
-    ])
-    return df_vazio, None
+            from docx import Document
+            import io
+            doc = Document(io.BytesIO(conteudo))
+            return "\n".join(p.text for p in doc.paragraphs)
+        except Exception as e:
+            st.error(f"Não foi possível ler o DOCX: {e}")
+            return ""
+    if nome.endswith(".pdf"):
+        try:
+            from pypdf import PdfReader
+            import io
+            reader = PdfReader(io.BytesIO(conteudo))
+            return "\n".join(page.extract_text() or "" for page in reader.pages)
+        except Exception as e:
+            st.error(f"Não foi possível ler o PDF. Verifique se é um PDF com texto selecionável. Detalhes: {e}")
+            return ""
+    st.warning("Formato não suportado. Use TXT, DOCX ou PDF.")
+    return ""
 
-# Inicializar o estado da sessão
-if "nome_professor" not in st.session_state: st.session_state.nome_professor = ""
-if "nome_aluno" not in st.session_state: st.session_state.nome_aluno = ""
-if "ano_escolar" not in st.session_state: st.session_state.ano_escolar = 2
-if "texto_original" not in st.session_state: st.session_state.texto_original = ""
-if "texto_transcrito_manual" not in st.session_state: st.session_state.texto_transcrito_manual = ""
+def transcrever_audio(caminho):
+    model = carregar_whisper()
+    result = model.transcribe(
+        caminho,
+        language="pt",
+        task="transcribe",
+        temperature=0,
+        condition_on_previous_text=False,
+        word_timestamps=True
+        # Não passar o texto de referência como prompt: isso pode induzir a transcrição.
+    )
+    return result.get("text", "").strip()
 
-# Criar separadores (Tabs)
-aba1, aba2 = st.tabs(["📝 Nova Avaliação Individual", "📊 Painel e Histórico da Turma"])
+def comparar_textos(original, lido):
+    orig_raw = tokenizar(original)
+    lido_raw = tokenizar(lido)
+    orig_norm = [normalizar_palavra(p) for p in orig_raw]
+    lido_norm = [normalizar_palavra(p) for p in lido_raw]
 
-with aba1:
-    st.markdown("### Preencha os dados da avaliação")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.session_state.nome_professor = st.text_input("Nome do Professor / Turma", value=st.session_state.nome_professor, placeholder="Ex: Prof. Kauê - 3º Ano A")
-    with col2:
-        st.session_state.nome_aluno = st.text_input("Nome Completo do Aluno", value=st.session_state.nome_aluno, placeholder="Digite o nome do estudante...")
-        
-    col3, col4 = st.columns(2)
-    with col3:
-        indices_anos = {1: 0, 2: 1, 3: 2, 4: 3, 5: 4}
-        idx_atual = indices_anos.get(st.session_state.ano_escolar, 2)
-        escolha_ano = st.selectbox("Ano Escolar", options=[1, 2, 3, 4, 5], index=idx_atual)
-        st.session_state.ano_escolar = escolha_ano
-    with col4:
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-    audio_file = st.audio_input("Gravação da Leitura (Microfone)")
-    
-    col_t1, col_t2 = st.columns(2)
-    with col_t1:
-        st.session_state.texto_original = st.text_area("Texto Original (Referência)", value=st.session_state.texto_original, placeholder="Digite o título na 1ª linha e o texto nas linhas abaixo...", height=150)
-    with col_t2:
-        st.session_state.texto_transcrito_manual = st.text_area("Texto Lido (Transcrito por IA ou ajustável - Edite se necessário)", value=st.session_state.texto_transcrito_manual, placeholder="Deixe em branco para transcrever automaticamente pelo microfone...", height=150)
+    matcher = difflib.SequenceMatcher(None, orig_norm, lido_norm, autojunk=False)
+    linhas = []
+    corretas = substituicoes = omissoes = insercoes = 0
 
-    col_btn1, col_btn2 = st.columns(2)
-    with col_btn1:
-        gerar_diagnostico = st.button("🚀 Gerar Diagnóstico Multidimensional", type="primary", use_container_width=True)
-    with col_btn2:
-        if st.button("🔄 Refazer / Limpar Avaliação", use_container_width=True):
-            st.session_state.nome_aluno = ""
-            st.session_state.texto_original = ""
-            st.session_state.texto_transcrito_manual = ""
-            st.rerun()
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            for k in range(i2 - i1):
+                linhas.append({"Esperado": orig_raw[i1+k], "Transcrição": lido_raw[j1+k], "Resultado": "Correto"})
+                corretas += 1
+        elif tag == "replace":
+            n = min(i2-i1, j2-j1)
+            for k in range(n):
+                linhas.append({"Esperado": orig_raw[i1+k], "Transcrição": lido_raw[j1+k], "Resultado": "Substituição"})
+                substituicoes += 1
+            for k in range(n, i2-i1):
+                linhas.append({"Esperado": orig_raw[i1+k], "Transcrição": "—", "Resultado": "Omissão"})
+                omissoes += 1
+            for k in range(n, j2-j1):
+                linhas.append({"Esperado": "—", "Transcrição": lido_raw[j1+k], "Resultado": "Inserção"})
+                insercoes += 1
+        elif tag == "delete":
+            for k in range(i1, i2):
+                linhas.append({"Esperado": orig_raw[k], "Transcrição": "—", "Resultado": "Omissão"})
+                omissoes += 1
+        elif tag == "insert":
+            for k in range(j1, j2):
+                linhas.append({"Esperado": "—", "Transcrição": lido_raw[k], "Resultado": "Inserção"})
+                insercoes += 1
 
-    if gerar_diagnostico:
-        prof_val = st.session_state.nome_professor.strip()
-        aluno_val = st.session_state.nome_aluno.strip()
-        orig_val = st.session_state.texto_original.strip()
-        
-        if not prof_val:
-            prof_val = "Professor_Anonimo"
-        if not aluno_val:
-            aluno_val = "Aluno Anonimo"
-            
-        if not orig_val:
-            st.warning("⚠️ Por favor, preencha o campo 'Texto Original (Referência)' antes de gerar o diagnóstico.")
-        else:
-            caminho_audio_temp = None
-            if audio_file is not None:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp:
-                    tmp.write(audio_file.read())
-                    caminho_audio_temp = tmp.name
-            
-            with st.spinner("A analisar a leitura com rigor e estabilidade..."):
-                texto_auto, duracao_auto = transcrever_e_calcular(caminho_audio_temp, orig_val)
-            
-            tempo_real = duracao_auto if duracao_auto > 0 else 15.0
-            
-            if not st.session_state.texto_transcrito_manual.strip() and texto_auto:
-                st.session_state.texto_transcrito_manual = texto_auto
-                st.rerun()
-                
-            texto_a_usar = st.session_state.texto_transcrito_manual.strip()
-            if not texto_a_usar:
-                texto_a_usar = texto_auto
-                
-            nome_ficheiro_audio = "Sem_Audio"
-            if caminho_audio_temp:
-                try:
-                    pasta_audios = "audios_turma"
-                    os.makedirs(pasta_audios, exist_ok=True)
-                    nome_limpo_aluno = re.sub(r'[^\w\s]', '', aluno_val).strip().replace(' ', '_')
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    nome_ficheiro_audio = f"{nome_limpo_aluno}_{timestamp}.webm"
-                    shutil.copy(caminho_audio_temp, os.path.join(pasta_audios, nome_ficheiro_audio))
-                except Exception:
-                    pass
+    total_original = len(orig_raw)
+    total_transcrito = len(lido_raw)
+    taxa_precisao = (corretas / total_original * 100) if total_original else 0
+    erros = substituicoes + omissoes + insercoes
+    return {
+        "linhas": linhas,
+        "corretas": corretas,
+        "substituicoes": substituicoes,
+        "omissoes": omissoes,
+        "insercoes": insercoes,
+        "erros": erros,
+        "total_original": total_original,
+        "total_transcrito": total_transcrito,
+        "precisao": taxa_precisao
+    }
 
-            lista_original_raw = orig_val.split()
-            lista_lida_raw = texto_a_usar.split()
-            
-            palavras_originais_limpas = [limpar_palavra(p) for p in lista_original_raw]
-            palavras_lidas_limpas = [limpar_palavra(p) for p in lista_lida_raw]
-            
-            matcher = difflib.SequenceMatcher(None, palavras_originais_limpas, palavras_lidas_limpas)
-            
-            resultado_analise = []
-            erros_detalhados = []
-            acertos = 0
-            total_palavras = len(palavras_originais_limpas)
-            total_erros = 0
-            
-            for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-                if tag == 'equal':
-                    for k in range(i2 - i1):
-                        orig_orig = lista_original_raw[i1 + k]
-                        resultado_analise.append((orig_orig, orig_orig, "CORRETO"))
-                        acertos += 1
-                elif tag == 'replace':
-                    for k in range(max(i2 - i1, j2 - j1)):
-                        orig_orig = lista_original_raw[i1 + k] if (i1 + k) < i2 else ""
-                        lido_orig = lista_lida_raw[j1 + k] if (j1 + k) < j2 else ""
-                        if orig_orig and lido_orig:
-                            sub_matcher = difflib.SequenceMatcher(None, limpar_palavra(orig_orig), limpar_palavra(lido_orig))
-                            if sub_matcher.ratio() >= 0.5:
-                                resultado_analise.append((orig_orig, lido_orig, "VARIACAO_FONETICA"))
-                                acertos += 0.5
-                                total_erros += 1
-                                erros_detalhados.append(f"Troca fonética: [{orig_orig}] lido como [{lido_orig}]")
-                            else:
-                                resultado_analise.append((orig_orig, lido_orig, "ERRADO"))
-                                total_erros += 1
-                                erros_detalhados.append(f"Erro/Troca estrutural: Esperado [{orig_orig}] --> Lido [{lido_orig}]")
-                        elif orig_orig:
-                            resultado_analise.append((orig_orig, "", "OMITIDO"))
-                            total_erros += 1
-                            erros_detalhados.append(f"Omitido: [{orig_orig}]")
-                elif tag == 'delete':
-                    for k in range(i2 - i1):
-                        orig_orig = lista_original_raw[i1 + k]
-                        resultado_analise.append((orig_orig, "", "OMITIDO"))
-                        total_erros += 1
-                        erros_detalhados.append(f"Omitido: [{orig_orig}]")
+def estimar_tempo(ano, palavras, complexidade):
+    # Estimativa orientativa, não norma oficial nem substituto de avaliação docente.
+    # Faixas configuráveis de PPM aproximadas para estimar a duração total.
+    faixas_ppm = {
+        1: (20, 40),
+        2: (40, 60),
+        3: (60, 90),
+        4: (80, 110),
+        5: (100, 130)
+    }
+    min_ppm, max_ppm = faixas_ppm[ano]
+    fator = {"Simples": 0.90, "Intermediário": 1.00, "Complexo": 1.20}[complexidade]
+    # Complexidade aumenta o tempo estimado.
+    tempo_min = palavras / max_ppm * 60 * fator
+    tempo_max = palavras / min_ppm * 60 * fator
+    return round(tempo_min), round(tempo_max)
 
-            taxa_acertos = (acertos / total_palavras) * 100 if total_palavras > 0 else 0
-            if taxa_acertos > 100: taxa_acertos = 100.0
-            
-            minutos_gastos = tempo_real / 60 if tempo_real > 0 else 1
-            velocidade_ppm = round(total_palavras / minutos_gastos) if minutos_gastos > 0 else 0
-            
-            metas_ppm = {1: 35, 2: 60, 3: 90, 4: 110, 5: 130}
-            meta_esperada = metas_ppm.get(int(st.session_state.ano_escolar), 80)
-            razao_ritmo = velocidade_ppm / meta_esperada if meta_esperada > 0 else 0
-            
-            if tempo_real > (total_palavras * 2.5):
-                prosodia_indicador = "Pausada / Fragmentada (Hesitações frequentes)"
-            elif tempo_real < (total_palavras * 0.8):
-                prosodia_indicador = "Acelerada / Precipitada"
-            else:
-                prosodia_indicador = "Fluida com continuidade e ritmo adequado"
+def classificacao(ano, ppm, precisao):
+    # Limites provisórios configuráveis. Não são referência oficial universal.
+    metas = {1: 35, 2: 60, 3: 90, 4: 110, 5: 130}
+    meta = metas[ano]
+    razao = ppm / meta if meta else 0
+    if precisao < 70 or razao < 0.50:
+        nivel = "Abaixo do básico"
+    elif precisao < 85 or razao < 0.75:
+        nivel = "Básico"
+    elif precisao < 95 or razao < 1.00:
+        nivel = "Adequado"
+    else:
+        nivel = "Avançado"
+    return nivel, meta
 
-            if taxa_acertos < 70 or razao_ritmo < 0.5:
-                nivel_proficiencia = "🔴 Abaixo do básico"
-                interpretacao_nivel = "Fluência ainda muito distante das expectativas para a escolaridade."
-            elif taxa_acertos < 85 or razao_ritmo < 0.75:
-                nivel_proficiencia = "🟠 Básico"
-                interpretacao_nivel = "Apresenta habilidades iniciais de fluência, mas necessita avançar."
-            elif taxa_acertos < 95 or razao_ritmo < 1.0:
-                nivel_proficiencia = "🟡 Adequado"
-                interpretacao_nivel = "Demonstra fluência compatível com as expectativas da escolaridade."
-            else:
-                nivel_proficiencia = "🟢 Avançado"
-                interpretacao_nivel = "Apresenta desempenho superior às expectativas previstas."
+def orientacao(nivel, precisao, ppm, ano, meta, substituicoes, omissoes):
+    if precisao < 85:
+        return "Priorizar precisão: leitura compartilhada, reconhecimento de palavras, correspondência grafema-fonema e releitura orientada. Revisar manualmente os erros identificados pela transcrição."
+    if ppm < meta * 0.75:
+        return "Trabalhar continuidade e automatização com leitura repetida de textos curtos, modelagem pelo professor e acompanhamento do ritmo sem pressionar o estudante."
+    if substituicoes + omissoes > 0:
+        return "Manter práticas de leitura expressiva e atenção às palavras. Analisar as substituições e omissões no áudio, pois a transcrição automática pode apresentar falhas."
+    return "Ampliar repertório textual, leitura expressiva, vocabulário e compreensão. Confirmar a classificação com observação docente e atividade de compreensão."
 
-            if velocidade_ppm < meta_esperada * 0.6 and taxa_acertos < 80:
-                orientacao_pratica = "Baixa velocidade e poucos acertos: trabalhar reconhecimento de palavras, leitura repetida e consciência fonológica."
-            elif velocidade_ppm >= meta_esperada * 0.8 and taxa_acertos < 85:
-                orientacao_pratica = "Boa velocidade, mas muitos erros: desenvolver precisão, atenção às palavras e correspondência entre grafemas e fonemas."
-            elif taxa_acertos >= 85 and "Pausada" in prosodia_indicador:
-                orientacao_pratica = "Leitura correta, mas muito pausada: trabalhar continuidade, ritmo e leitura de frases."
-            else:
-                orientacao_pratica = "Boa fluência: ampliar o repertório textual e trabalhar leitura expressiva, inferências e compreensão."
+def salvar_historico(registro):
+    df = pd.DataFrame([registro])
+    if HISTORY_FILE.exists():
+        df.to_csv(HISTORY_FILE, mode="a", header=False, index=False, encoding="utf-8-sig")
+    else:
+        df.to_csv(HISTORY_FILE, index=False, encoding="utf-8-sig")
 
-            html_texto = "<div style='font-size: 18px; line-height: 1.8; background-color: #1e1e1e; padding: 15px; border-radius: 8px; color: #ffffff;'>"
-            for orig, lido, status in resultado_analise:
-                if status == "CORRETO":
-                    html_texto += f"<span style='color: #4ade80; font-weight: bold;'>{orig}</span> "
-                elif status == "VARIACAO_FONETICA":
-                    html_texto += f"<span style='color: #fbbf24; text-decoration: underline; font-weight: bold;'>⚡{orig} ({lido})</span> "
-                elif status == "ERRADO":
-                    html_texto += f"<span style='color: #f87171; text-decoration: line-through; font-weight: bold;'>{orig}</span><span style='color: #f87171; font-size: 15px; font-weight: bold;'>({lido})</span> "
-                else:
-                    html_texto += f"<span style='color: #ef4444; text-decoration: underline; font-style: italic;'>{orig} [Omitido]</span> "
-            html_texto += "</div>"
-            
-            st.markdown(f"### 📊 Relatório Diagnóstico: {aluno_val} ({st.session_state.ano_escolar}º Ano)")
-            
-            df_indicadores = pd.DataFrame({
-                "Indicador": ["Velocidade", "Taxa de acertos", "Índice de erros", "Prosódia", "Nível de Proficiência"],
-                "O que permite verificar / Resultado": [
-                    f"{velocidade_ppm} Palavras por minuto (Meta: {meta_esperada} PPM)",
-                    f"{taxa_acertos:.1f}% de acertos corretos",
-                    f"{total_erros} equívocos (trocas, omissões ou falhas)",
-                    f"{prosodia_indicador}",
-                    f"{nivel_proficiencia} — {interpretacao_nivel}"
-                ]
-            })
-            st.table(df_indicadores)
-            
-            st.markdown(f"### 💡 Orientação Pedagógica Recomendada:")
-            st.info(orientacao_pratica)
-            
-            st.markdown("#### 🔍 Transparência (Comparação entre Texto Original e Lido):")
-            st.markdown(html_texto, unsafe_allow_html=True)
-            
-            if caminho_audio_temp and os.path.exists(caminho_audio_temp):
-                st.markdown("#### 🎧 Áudio da Leitura Realizada:")
-                st.audio(caminho_audio_temp)
+# ---------- Interface ----------
+with st.sidebar:
+    st.header("Dados da avaliação")
+    professor = st.text_input("Professor / Turma", placeholder="Ex.: Prof. Kauê — 3º A")
+    aluno = st.text_input("Nome do estudante")
+    ano = st.selectbox("Ano escolar", [1, 2, 3, 4, 5], index=2)
+    complexidade = st.selectbox("Complexidade estimada do texto", ["Simples", "Intermediário", "Complexo"], index=1)
+    st.caption("A estimativa de tempo é orientativa e deve ser validada pelo professor.")
 
-            ficheiro_csv = obter_nome_ficheiro_csv(prof_val)
-            file_exists = os.path.exists(ficheiro_csv)
-            with open(ficheiro_csv, mode="a", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
-                if not file_exists:
-                    writer.writerow([
-                        "Data/Hora", "Professor/Turma", "Aluno", "Ano", 
-                        "Velocidade (PPM)", "Taxa Acertos (%)", "Indice Erros", "Prosodia", 
-                        "Nivel Proficiencia", "Tempo (s)", "Audio"
-                    ])
-                writer.writerow([
-                    datetime.now().strftime("%Y-%m-%d %H:%M"), prof_val, aluno_val, st.session_state.ano_escolar,
-                    velocidade_ppm, f"{taxa_acertos:.1f}", total_erros, prosodia_indicador,
-                    nivel_proficiencia, tempo_real, nome_ficheiro_audio
-                ])
-            
-            nome_limpo_arq = re.sub(r'[^\w\s]', '', aluno_val).strip().replace(' ', '_')
-            ficheiro_individual = f"relatorio_{nome_limpo_arq}.html"
-            
-            conteudo_html = f"""<!DOCTYPE html>
-<html lang="pt-BR">
-<head><meta charset="UTF-8"><title>Relatório - {aluno_val}</title></head>
-<body style="font-family: Arial, sans-serif; background: #f4f6f9; padding: 20px;">
-    <div style="background: #fff; padding: 25px; border-radius: 10px; max-width: 800px; margin: auto;">
-        <h2>📚 Teste de Fluência Leitora - Professor Kauê</h2>
-        <p><strong>Professor / Turma:</strong> {prof_val}</p>
-        <p><strong>Aluno:</strong> {aluno_val} ({st.session_state.ano_escolar}º Ano)</p>
-        <hr>
-        <h3>Indicadores de Desempenho</h3>
-        <ul>
-            <li><strong>Velocidade:</strong> {velocidade_ppm} PPM (Meta: {meta_esperada})</li>
-            <li><strong>Taxa de Acertos:</strong> {taxa_acertos:.1f}%</li>
-            <li><strong>Índice de Erros:</strong> {total_erros} ocorrências</li>
-            <li><strong>Prosódia:</strong> {prosodia_indicador}</li>
-            <li><strong>Nível de Proficiência:</strong> {nivel_proficiencia} ({interpretacao_nivel})</li>
-        </ul>
-        <h3>Orientação Pedagógica</h3>
-        <p style="background: #e2e8f0; padding: 12px; border-radius: 6px;">{orientacao_pratica}</p>
-        <h3>Análise Textual Detalhada</h3>
-        <div style="background: #1e1e1e; padding: 15px; border-radius: 8px; color: #fff; margin-top: 15px;">{html_texto}</div>
-    </div></body></html>"""
-            
-            with open(ficheiro_individual, "w", encoding="utf-8") as f_ind:
-                f_ind.write(conteudo_html)
-                
-            with open(ficheiro_individual, "rb") as f_dl:
-                st.download_button("📥 Descarregar Relatório Individual (.html)", f_dl, file_name=ficheiro_individual, mime="text/html")
+st.subheader("1. Texto de leitura")
+uploaded = st.file_uploader("Anexar texto (TXT, DOCX ou PDF)", type=["txt", "docx", "pdf"])
+texto_arquivo = extrair_texto_arquivo(uploaded) if uploaded else ""
+texto = st.text_area("Ou cole / edite o texto aqui", value=texto_arquivo, height=220,
+                     placeholder="Cole o texto que o estudante deverá ler...")
+palavras_orig = tokenizar(texto)
+n_palavras = len(palavras_orig)
 
-with aba2:
-    st.markdown("### 📊 Painel e Histórico da Turma")
-    st.markdown("Insira o nome do professor ou turma para consultar os registos e descarregar a base de dados exclusiva.")
-    
-    input_busca_prof = st.text_input("Consultar Professor / Turma", value="", placeholder="Digite exatamente o nome usado...")
-    
-    if st.button("🔍 Carregar Histórico"):
-        df_turma, f_csv = carregar_tabela_turma(input_busca_prof)
-        if not df_turma.empty:
-            st.dataframe(df_turma, use_container_width=True)
-            if f_csv and os.path.exists(f_csv):
-                with open(f_csv, "rb") as f_csv_dl:
-                    st.download_button("📥 Descarregar Base Completa desta Turma (CSV)", f_csv_dl, file_name=f_csv, mime="text/csv")
-        else:
-            st.info("Ainda não existem registos guardados para este nome de professor/turma.")
+if n_palavras:
+    tmin, tmax = estimar_tempo(ano, n_palavras, complexidade)
+    st.info(f"Texto com **{n_palavras} palavras**. Tempo estimado orientativo para o {ano}º ano: **{tmin//60} min {tmin%60:02d} s a {tmax//60} min {tmax%60:02d} s**.")
+else:
+    tmin = tmax = 0
+    st.caption("O tempo estimado aparecerá quando o texto for inserido.")
+
+st.subheader("2. Gravação da leitura")
+audio = st.audio_input("Gravar o estudante lendo o texto completo")
+
+st.subheader("3. Transcrição (opcional)")
+transcricao_manual = st.text_area(
+    "Transcrição reconhecida pela IA ou corrigida pelo professor",
+    placeholder="Após transcrever o áudio, você poderá revisar ou corrigir este texto.",
+    height=130
+)
+
+if st.button("🎙️ Transcrever áudio", type="secondary", disabled=(audio is None)):
+    with st.spinner("Transcrevendo áudio com Whisper..."):
+        suffix = Path(audio.name).suffix or ".wav"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(audio.getvalue())
+            caminho = tmp.name
+        try:
+            transcricao = transcrever_audio(caminho)
+            st.session_state["transcricao_whisper"] = transcricao
+            st.success("Transcrição concluída. Revise o texto abaixo antes de gerar o diagnóstico.")
+            st.text_area("Transcrição obtida", value=transcricao, height=150, key="transcricao_resultado")
+        except Exception as e:
+            st.error(f"Falha na transcrição: {e}")
+        finally:
+            try:
+                os.remove(caminho)
+            except OSError:
+                pass
+
+transcricao = st.session_state.get("transcricao_whisper", "")
+if transcricao_manual.strip():
+    transcricao = transcricao_manual.strip()
+
+st.subheader("4. Diagnóstico")
+if st.button("📊 Gerar diagnóstico", type="primary"):
+    if not texto.strip():
+        st.error("Insira o texto original antes de avaliar.")
+    elif not aluno.strip():
+        st.error("Informe o nome do estudante.")
+    elif not transcricao.strip():
+        st.error("Transcreva o áudio ou cole a transcrição revisada pelo professor.")
+    else:
+        analise = comparar_textos(texto, transcricao)
+        # Preferir duração real do arquivo de áudio. Se não disponível, solicitar duração.
+        duracao_audio = None
+        if audio is not None:
+            try:
+                import librosa
+                with tempfile.NamedTemporaryFile(delete=False, suffix=Path(audio.name).suffix or ".wav") as tmp:
+                    tmp.write(audio.getvalue())
+                    audio_path = tmp.name
+                duracao_audio = float(librosa.get_duration(path=audio_path))
+                os.remove(audio_path)
+            except Exception:
+                duracao_audio = None
+
+        if not duracao_audio or duracao_audio <= 0:
+            duracao_audio = st.number_input("Informe a duração total da leitura em segundos", min_value=1.0, value=60.0, step=1.0)
+
+        ppm_total = (analise["total_transcrito"] / duracao_audio * 60) if duracao_audio else 0
+        ppm_corretas = (analise["corretas"] / duracao_audio * 60) if duracao_audio else 0
+        nivel, meta = classificacao(ano, ppm_corretas, analise["precisao"])
+        recomendacao = orientacao(nivel, analise["precisao"], ppm_corretas, ano, meta, analise["substituicoes"], analise["omissoes"])
+
+        st.markdown(f"### Resultado: {aluno}")
+        st.markdown(f"**{nivel}**")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Duração", f"{int(duracao_audio//60)}:{int(duracao_audio%60):02d}")
+        c2.metric("Palavras/minuto", f"{ppm_total:.1f}")
+        c3.metric("Palavras corretas/minuto", f"{ppm_corretas:.1f}")
+        c4.metric("Precisão", f"{analise['precisao']:.1f}%")
+
+        c5, c6, c7, c8 = st.columns(4)
+        c5.metric("Substituições", analise["substituicoes"])
+        c6.metric("Omissões", analise["omissoes"])
+        c7.metric("Inserções", analise["insercoes"])
+        c8.metric("Erros identificados", analise["erros"])
+
+        st.warning("A transcrição automática pode errar, especialmente em crianças, sotaques, fala baixa e ruído. Confirme o resultado ouvindo a gravação antes de registrar a avaliação.")
+        st.markdown("#### Orientação pedagógica")
+        st.write(recomendacao)
+        st.markdown("#### Comparação palavra a palavra")
+        st.dataframe(pd.DataFrame(analise["linhas"]), use_container_width=True, hide_index=True)
+
+        registro = {
+            "Data/Hora": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "Professor/Turma": professor,
+            "Aluno": aluno,
+            "Ano": ano,
+            "Palavras texto": analise["total_original"],
+            "Palavras transcritas": analise["total_transcrito"],
+            "Duração (s)": round(duracao_audio, 2),
+            "PPM": round(ppm_total, 1),
+            "PCPM": round(ppm_corretas, 1),
+            "Precisão (%)": round(analise["precisao"], 1),
+            "Substituições": analise["substituicoes"],
+            "Omissões": analise["omissoes"],
+            "Inserções": analise["insercoes"],
+            "Nível": nivel
+        }
+        salvar_historico(registro)
+        st.success("Avaliação salva no histórico local.")
+
+        html_relatorio = f"""<!doctype html><html lang="pt-br"><meta charset="utf-8">
+        <title>Relatório de Fluência</title><body style="font-family:Arial;padding:24px">
+        <h1>Relatório de Fluência Leitora</h1>
+        <p><b>Professor/Turma:</b> {html.escape(professor)}</p>
+        <p><b>Aluno:</b> {html.escape(aluno)} | <b>Ano:</b> {ano}º</p>
+        <h2>Classificação: {html.escape(nivel)}</h2>
+        <ul><li>Duração: {duracao_audio:.1f} s</li><li>PPM: {ppm_total:.1f}</li>
+        <li>PCPM: {ppm_corretas:.1f}</li><li>Precisão: {analise['precisao']:.1f}%</li>
+        <li>Substituições: {analise['substituicoes']}</li><li>Omissões: {analise['omissoes']}</li>
+        <li>Inserções: {analise['insercoes']}</li></ul>
+        <h3>Orientação pedagógica</h3><p>{html.escape(recomendacao)}</p>
+        <p><i>Resultado automatizado para apoio ao professor. Revisar o áudio e validar pedagogicamente.</i></p>
+        </body></html>"""
+        st.download_button("⬇️ Baixar relatório HTML", html_relatorio, file_name=f"relatorio_{aluno.strip().replace(' ','_')}.html", mime="text/html")
+        st.download_button("⬇️ Baixar histórico CSV", HISTORY_FILE.read_bytes(), file_name="historico_fluencia.csv", mime="text/csv")
+
+st.divider()
+st.caption("Aplicativo de apoio pedagógico. A classificação é provisória e deve ser validada pelo professor.")
+
