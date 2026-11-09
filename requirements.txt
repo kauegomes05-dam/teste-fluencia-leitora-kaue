@@ -2,5 +2,7 @@ streamlit
 pandas
 librosa
 openai-whisper
-torch --index-url https://download.pytorch.org/whl/cpu
-torchaudio --index-url https://download.pytorch.org/whl/cpu
+torch
+torchaudio
+python-docx
+pypdf
