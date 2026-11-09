@@ -133,9 +133,9 @@ def comparar_textos(original, lido):
         "precisao": taxa_precisao
     }
 
-def estimar_tempo(ano, palavras, complexidade):
-    # Estimativa orientativa, não norma oficial nem substituto de avaliação docente.
-    # Faixas configuráveis de PPM aproximadas para estimar a duração total.
+def estimar_tempo(ano, palavras):
+    # Estimativa orientativa baseada no ano escolar e extensão do texto.
+    # Os intervalos são parâmetros provisórios, configuráveis pelo professor/rede.
     faixas_ppm = {
         1: (20, 40),
         2: (40, 60),
@@ -144,10 +144,8 @@ def estimar_tempo(ano, palavras, complexidade):
         5: (100, 130)
     }
     min_ppm, max_ppm = faixas_ppm[ano]
-    fator = {"Simples": 0.90, "Intermediário": 1.00, "Complexo": 1.20}[complexidade]
-    # Complexidade aumenta o tempo estimado.
-    tempo_min = palavras / max_ppm * 60 * fator
-    tempo_max = palavras / min_ppm * 60 * fator
+    tempo_min = palavras / max_ppm * 60
+    tempo_max = palavras / min_ppm * 60
     return round(tempo_min), round(tempo_max)
 
 def classificacao(ano, ppm, precisao):
@@ -187,8 +185,7 @@ with st.sidebar:
     professor = st.text_input("Professor / Turma", placeholder="Ex.: Prof. Kauê — 3º A")
     aluno = st.text_input("Nome do estudante")
     ano = st.selectbox("Ano escolar", [1, 2, 3, 4, 5], index=2)
-    complexidade = st.selectbox("Complexidade estimada do texto", ["Simples", "Intermediário", "Complexo"], index=1)
-    st.caption("A estimativa de tempo é orientativa e deve ser validada pelo professor.")
+    st.caption("A estimativa de tempo considera o ano escolar e a quantidade de palavras do texto.")
 
 st.subheader("1. Texto de leitura")
 uploaded = st.file_uploader("Anexar texto (TXT, DOCX ou PDF)", type=["txt", "docx", "pdf"])
@@ -199,7 +196,7 @@ palavras_orig = tokenizar(texto)
 n_palavras = len(palavras_orig)
 
 if n_palavras:
-    tmin, tmax = estimar_tempo(ano, n_palavras, complexidade)
+    tmin, tmax = estimar_tempo(ano, n_palavras)
     st.info(f"Texto com **{n_palavras} palavras**. Tempo estimado orientativo para o {ano}º ano: **{tmin//60} min {tmin%60:02d} s a {tmax//60} min {tmax%60:02d} s**.")
 else:
     tmin = tmax = 0
@@ -326,4 +323,5 @@ if st.button("📊 Gerar diagnóstico", type="primary"):
 
 st.divider()
 st.caption("Aplicativo de apoio pedagógico. A classificação é provisória e deve ser validada pelo professor.")
+
 
